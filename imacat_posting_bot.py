@@ -1,7 +1,7 @@
 import os
 import json
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from telegram import Update, BotCommand
 from telegram.ext import (
@@ -11,6 +11,7 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 load_dotenv()
 
@@ -19,6 +20,9 @@ USER_ID = int(os.getenv("USER_ID"))
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 
 QUEUE_FILE = "video_queue.json"
+schedule_enabled = False
+scheduled_jobs = []
+scheduler = AsyncIOScheduler()
 
 
 def load_queue() -> list:
@@ -73,9 +77,17 @@ async def post_videos(
     if update.effective_user.id != USER_ID:
         return
 
+    await do_posting(context, count=count, randomize=randomize)
+
+
+async def do_posting(
+        context: ContextTypes.DEFAULT_TYPE, count: int, randomize: bool = False
+) -> None:
     queue = load_queue()
     if not queue:
-        await update.message.reply_text("Нет видеофайлов для поста.")
+        await context.bot.send_message(
+            chat_id=USER_ID, text="Нет видеофайлов для поста."
+        )
         return
 
     if randomize:
@@ -90,23 +102,24 @@ async def post_videos(
         try:
             await context.bot.send_video(chat_id=CHANNEL_ID, video=item["id"])
         except Exception as e:
-            await update.message.reply_text(f"Ошибка при отправке видео: {e}")
+            await context.bot.send_message(
+                chat_id=USER_ID, text=f"Ошибка при отправке видео: {e}"
+            )
 
     save_queue(queue)
-    await update.message.reply_text(
-        f"Отправлено {len(files_to_post)} видео в канал."
+    await context.bot.send_message(
+        chat_id=USER_ID,
+        text=f"Отправлено {len(files_to_post)} видео в канал."
     )
 
 
 async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Команда /post_now — публикует 3 видео по порядку."""
     await post_videos(update, context, count=3, randomize=False)
 
 
 async def post_now_random(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Команда /post_now_random — публикует от 2 до 5 случайных видео."""
     await post_videos(
         update, context, count=random.randint(2, 5), randomize=True
     )
@@ -115,7 +128,6 @@ async def post_now_random(
 async def post_now_five(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Команда /post_now_five — публикует ровно 5 видео по порядку."""
     await post_videos(update, context, count=5, randomize=False)
 
 
@@ -145,6 +157,115 @@ async def marko(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Поло.")
 
 
+async def schedule_mode(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Включает автоматический режим постинга с планированием на день."""
+    global schedule_enabled
+    if update.effective_user.id != USER_ID:
+        return
+
+    schedule_enabled = True
+    scheduler.add_job(
+        plan_daily_posts, "cron", hour=8, minute=0, id="daily_schedule"
+    )
+    await update.message.reply_text(
+        "Автоматический режим включён."
+        "Расписание будет создаваться ежедневно в 08:00."
+    )
+
+
+async def schedule_mode_off(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Отключает автоматический режим постинга."""
+    global schedule_enabled
+    if update.effective_user.id != USER_ID:
+        return
+
+    schedule_enabled = False
+    scheduler.remove_job("daily_schedule")
+    for job in scheduled_jobs:
+        try:
+            scheduler.remove_job(job)
+        except Exception:
+            pass
+    scheduled_jobs.clear()
+    await update.message.reply_text("Автоматический режим выключен.")
+
+
+async def plan_daily_posts():
+    """Планирует посты на текущий день: каждые 2–3 часа с 8:00 до 23:00."""
+    global scheduled_jobs
+    scheduled_jobs.clear()
+
+    start_time = datetime.now().replace(
+        hour=8, minute=0, second=0, microsecond=0
+    )
+    end_time = datetime.now().replace(
+        hour=23, minute=0, second=0, microsecond=0
+    )
+
+    post_times = []
+    current_time = start_time
+    while current_time < end_time:
+        interval = timedelta(hours=random.randint(2, 3))
+        current_time += interval
+        if current_time < end_time:
+            post_times.append(current_time)
+
+    # Отправка расписания хозяину
+    times_list = "\n".join(t.strftime("%H:%M") for t in post_times)
+    queue_size = len(load_queue())
+    await scheduler._context.bot.send_message(
+        chat_id=USER_ID,
+        text=(
+            f"Сегодняшнее расписание постов:\n{times_list}\n"
+            f"Видео в очереди: {queue_size}"
+        )
+    )
+
+    for t in post_times:
+        job_id = f"autopost_{t.strftime('%H%M')}"
+        scheduler.add_job(
+            func=do_posting,
+            trigger="date",
+            run_date=t,
+            kwargs={
+                "context": scheduler._context,
+                "count": random.randint(2, 4),
+                "randomize": False
+            },
+            id=job_id
+        )
+        scheduled_jobs.append(job_id)
+
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /status — показывает состояние очереди и расписания."""
+    if update.effective_user.id != USER_ID:
+        return
+
+    queue = load_queue()
+    status_lines = [
+        f"Автопостинг: {'ВКЛЮЧЕН' if schedule_enabled else 'выключен'}",
+        f"Видео в очереди: {len(queue)}"
+    ]
+
+    if schedule_enabled and scheduled_jobs:
+        times = [
+            scheduler.get_job(job_id).next_run_time.strftime("%H:%M")
+            for job_id in scheduled_jobs
+            if scheduler.get_job(job_id)
+        ]
+        status_lines.append("Оставшиеся публикации сегодня:")
+        status_lines.extend(times)
+    elif schedule_enabled:
+        status_lines.append("На сегодня публикации не запланированы.")
+
+    await update.message.reply_text("\n".join(status_lines))
+
+
 async def set_my_commands(app):
     """Регистрирует команды для Telegram-подсказки через /"""
     await app.bot.set_my_commands([
@@ -154,12 +275,21 @@ async def set_my_commands(app):
         BotCommand("post_now", "Постить 3 видео"),
         BotCommand("post_now_five", "Постить 5 видео"),
         BotCommand("post_now_random", "Постить 2–5 случайных видео"),
+        BotCommand("schedule_mode", "Включить автоматический режим"),
+        BotCommand("schedule_mode_off", "Выключить автоматический режим"),
+        BotCommand("status", "Показать статус автопостинга и очереди"),
     ])
+
+
+async def on_startup(app):
+    await set_my_commands(app)
+    scheduler._context = app.bot
+    scheduler.start()
 
 
 def main() -> None:
     """Инициализация и запуск Telegram-бота с регистрацией команд."""
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = ApplicationBuilder().token(TOKEN).post_init(on_startup).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("marko", marko))
@@ -167,11 +297,12 @@ def main() -> None:
     app.add_handler(CommandHandler("post_now", post_now))
     app.add_handler(CommandHandler("post_now_random", post_now_random))
     app.add_handler(CommandHandler("post_now_five", post_now_five))
+    app.add_handler(CommandHandler("schedule_mode", schedule_mode))
+    app.add_handler(CommandHandler("schedule_mode_off", schedule_mode_off))
     app.add_handler(
         MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video)
     )
-
-    app.run_async(set_my_commands(app))
+    app.add_handler(CommandHandler("status", status))
 
     print("Бот запущен. Команды Telegram зарегистрированы.")
     app.run_polling()
