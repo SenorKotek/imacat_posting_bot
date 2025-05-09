@@ -1,48 +1,88 @@
 import os
+import json
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
+    MessageHandler,
     ContextTypes,
+    filters,
 )
 
-# Загрузка переменных окружения из .env файла
 load_dotenv()
 
-# Получение токена и разрешённого user_id
 TOKEN = os.getenv("BOT_TOKEN")
 USER_ID = int(os.getenv("USER_ID"))
+CHANNEL_ID = os.getenv("CHANNEL_ID")
+
+QUEUE_FILE = "video_queue.json"
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Обрабатывает команду /start. Доступна только авторизованному пользователю.
-    """
+def load_queue() -> list:
+    if os.path.exists(QUEUE_FILE):
+        with open(QUEUE_FILE, "r") as f:
+            return json.load(f)
+    return []
+
+
+def save_queue(queue: list) -> None:
+    with open(QUEUE_FILE, "w") as f:
+        json.dump(queue, f)
+
+
+async def handle_video(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     if update.effective_user.id != USER_ID:
         return
-    await update.message.reply_text("Бот активен. Готов к работе.")
+
+    message = update.message
+    video = message.video or message.document
+
+    if not video:
+        return
+
+    file_id = video.file_id
+    queue = load_queue()
+    queue.append(file_id)
+    save_queue(queue)
+
+    await message.reply_text("Видео добавлено в очередь.")
 
 
-async def marko(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Обрабатывает команду /marko. Проверка связи.
-    """
+async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != USER_ID:
         return
-    await update.message.reply_text("Поло.")
+
+    queue = load_queue()
+    if not queue:
+        await update.message.reply_text("Нет видеофайлов для поста.")
+        return
+
+    files_to_post = queue[:3]
+    for file_id in files_to_post:
+        try:
+            await context.bot.send_video(chat_id=CHANNEL_ID, video=file_id)
+        except Exception as e:
+            await update.message.reply_text(f"Ошибка при отправке видео: {e}")
+
+    # Обновляем очередь
+    queue = queue[3:]
+    save_queue(queue)
+
+    await update.message.reply_text("Видео отправлены в канал.")
 
 
 def main() -> None:
-    """
-    Инициализация и запуск Telegram-бота.
-    """
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("marko", marko))
+    app.add_handler(CommandHandler("post_now", post_now))
+    app.add_handler(
+        MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video)
+    )
 
-    print("Бот запущен. Доступ разрешён только одному пользователю.")
+    print("Бот готов: очередь на основе file_id.")
     app.run_polling()
 
 
