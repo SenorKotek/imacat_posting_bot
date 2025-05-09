@@ -13,6 +13,7 @@ from telegram.ext import (
 )
 
 load_dotenv()
+
 TOKEN = os.getenv("BOT_TOKEN")
 USER_ID = int(os.getenv("USER_ID"))
 CHANNEL_ID = os.getenv("CHANNEL_ID")
@@ -21,6 +22,7 @@ QUEUE_FILE = "video_queue.json"
 
 
 def load_queue() -> list:
+    """Загружает очередь из файла JSON, если он существует."""
     if os.path.exists(QUEUE_FILE):
         with open(QUEUE_FILE, "r") as f:
             return json.load(f)
@@ -28,6 +30,7 @@ def load_queue() -> list:
 
 
 def save_queue(queue: list) -> None:
+    """Сохраняет текущую очередь в JSON-файл."""
     with open(QUEUE_FILE, "w") as f:
         json.dump(queue, f)
 
@@ -35,6 +38,8 @@ def save_queue(queue: list) -> None:
 async def handle_video(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
+    """Обрабатывает входящее видео от пользователя и добавляет его в очередь,
+    если такого видео ещё нет (по unique_id)."""
     if update.effective_user.id != USER_ID:
         return
 
@@ -63,6 +68,8 @@ async def post_videos(
     context: ContextTypes.DEFAULT_TYPE,
     count: int, randomize: bool = False
 ) -> None:
+    """Публикует заданное количество видео из очереди в канал.
+    Если randomize=True — выбирает случайные видео."""
     if update.effective_user.id != USER_ID:
         return
 
@@ -92,12 +99,14 @@ async def post_videos(
 
 
 async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /post_now — публикует 3 видео по порядку."""
     await post_videos(update, context, count=3, randomize=False)
 
 
 async def post_now_random(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
+    """Команда /post_now_random — публикует от 2 до 5 случайных видео."""
     await post_videos(
         update, context, count=random.randint(2, 5), randomize=True
     )
@@ -106,10 +115,12 @@ async def post_now_random(
 async def post_now_five(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
+    """Команда /post_now_five — публикует ровно 5 видео по порядку."""
     await post_videos(update, context, count=5, randomize=False)
 
 
 async def count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /count — показывает количество видео в очереди."""
     if update.effective_user.id != USER_ID:
         return
 
@@ -118,6 +129,7 @@ async def count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /start — выводит текущее время запуска бота."""
     if update.effective_user.id != USER_ID:
         return
 
@@ -126,6 +138,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def marko(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /marko — проверка связи, отвечает 'Поло.'"""
     if update.effective_user.id != USER_ID:
         return
 
@@ -133,6 +146,7 @@ async def marko(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def set_my_commands(app):
+    """Регистрирует команды для Telegram-подсказки через /"""
     await app.bot.set_my_commands([
         BotCommand("start", "Показать время запуска"),
         BotCommand("marko", "Проверка связи"),
@@ -144,6 +158,7 @@ async def set_my_commands(app):
 
 
 def main() -> None:
+    """Инициализация и запуск Telegram-бота с регистрацией команд."""
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
