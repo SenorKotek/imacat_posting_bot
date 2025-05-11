@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  imacat-bot:
+    build: .
+    container_name: imacat-bot
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./video_queue.json:/app/video_queue.json

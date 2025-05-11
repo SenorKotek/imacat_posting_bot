@@ -1,6 +1,7 @@
 import os
 import json
 import random
+from pytz import timezone
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from telegram import Update, BotCommand
@@ -23,6 +24,8 @@ QUEUE_FILE = "video_queue.json"
 schedule_enabled = False
 scheduled_jobs = []
 scheduler = AsyncIOScheduler()
+
+moscow = timezone("Europe/Moscow")
 
 
 def load_queue() -> list:
@@ -167,7 +170,8 @@ async def schedule_mode(
 
     schedule_enabled = True
     scheduler.add_job(
-        plan_daily_posts, "cron", hour=8, minute=0, id="daily_schedule"
+        plan_daily_posts, "cron", hour=7, minute=50,
+        id="daily_schedule", timezone=moscow
     )
     await update.message.reply_text(
         "Автоматический режим включён."
